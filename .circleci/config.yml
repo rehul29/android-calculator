@@ -144,7 +144,17 @@ jobs:
     <<: *ruby-container
     steps:
         - checkout
-                
+        - run:
+            name: Base Branch detection
+            command: |
+                curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+                sudo apt update
+                sudo apt install jq
+                sudo apt install -y vim
+                response=$(curl -X GET -H 'Cache-Control: no-cache' -H "Authorization: token ${GITHUB_ACCESS_TOKEN}" https://api.github.com/repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/pulls/$CIRCLE_PR_NUMBER)
+                base_branch=$(echo $response | jq -r '.base.ref')
+                echo $base_branch
+                echo $base_branch >> base_branch.txt
         - persist_to_workspace:
             root: ~/workspace
             paths:
@@ -431,18 +441,7 @@ jobs:
       - run:
           name: install dependencies
           command: |
-            curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
-            sudo apt update
-            sudo apt install jq
-            sudo pip install requests
-            sudo pip install smhasher
-            sudo pip install mysql-connector-python
-            sudo pip install statistics
-            wget http://apachemirror.wuchna.com/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.tar.gz
-            tar -xvf apache-maven-3.6.3-bin.tar.gz
-            mkdir ~/.ssh
-            touch ~/.ssh/known_hosts
-            ssh-keyscan github.com >> ~/.ssh/known_hosts
+            exit 0
       - run:
           name: run benchmark on robustest
           command: |
