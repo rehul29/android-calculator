@@ -165,7 +165,7 @@ jobs:
                 bundle exec danger --fail-on-errors=true --new-comment
   run-unit-test:
       <<: *default-container
-      <<: *test-environment
+      <<: *small-environment
       steps:
         - <<: *git-workspace
         - restore_cache:
@@ -202,7 +202,7 @@ jobs:
 
   build:
       <<: *default-container
-      <<: *test-environment
+      <<: *small-environment
       steps:
         - <<: *git-workspace
         - restore_cache:
@@ -239,7 +239,7 @@ jobs:
 
   prev-build:
       <<: *default-container
-      <<: *test-environment
+      <<: *small-environment
       steps:
         - <<: *git-workspace
         - restore_cache:
@@ -378,7 +378,7 @@ jobs:
                 fi
   run-lint:
       <<: *default-container
-      <<: *lint-environment
+      <<: *small-environment
       steps:
         - <<: *git-workspace
         - restore_cache:
@@ -453,7 +453,7 @@ jobs:
   
   build-for-espresso:
       <<: *default-container
-      <<: *test-environment
+      <<: *small-environment
       steps:
         - <<: *git-workspace
         - restore_cache:
