@@ -12,7 +12,7 @@ references:
   default-container: &default-container
     <<: *working-dir
     docker:
-      - image: circleci/android:30
+      - image: circleci/android:api-30
         auth:
           username: $DOCKERHUB_USERNAME 
           password: $DOCKERHUB_PASSWORD
