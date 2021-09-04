@@ -6,7 +6,7 @@ if __name__ == "__main__":
     page_num = 1
     try:
         pullreq = environ["CIRCLE_PULL_REQUEST"]
-        pr_id =(filter(str.isdigit, pullreq))
+        pr_id = pullreq[pullreq.rindex('/')+1:]
     except KeyError:
         pr_id = environ["CIRCLE_PR_NUMBER"]
     print(pr_id)

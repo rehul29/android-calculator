@@ -5,7 +5,7 @@ import github_utils
 
 try:
     pullreq = os.environ["CIRCLE_PULL_REQUEST"]
-    pr_id =(filter(str.isdigit, pullreq))
+    pr_id = pullreq[pullreq.rindex('/')+1:]
 except KeyError:
     pr_id = os.environ["CIRCLE_PR_NUMBER"]
 
