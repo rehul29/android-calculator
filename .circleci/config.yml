@@ -497,7 +497,7 @@ jobs:
             paths:
                 - sample/app/build/outputs/apk/
 
-  run-espresso-tests:
+  run-espresso:
     <<: *python-container
     <<: *small-environment
     steps:
