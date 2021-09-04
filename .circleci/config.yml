@@ -1,0 +1,570 @@
+version: 2.0
+references:
+  # Directories
+  working-dir: &working-dir
+    working_directory: ~/workspace/sample
+  
+  git-workspace: &git-workspace
+    attach_workspace:
+       at: ~/workspace
+
+  # Containers
+  default-container: &default-container
+    <<: *working-dir
+    docker:
+      - image: circleci/android:30
+        auth:
+          username: $DOCKERHUB_USERNAME 
+          password: $DOCKERHUB_PASSWORD
+
+  python-container: &python-container
+    <<: *working-dir
+    docker:
+      - image: circleci/python:2.7.16
+        auth:
+          username: $DOCKERHUB_USERNAME 
+          password: $DOCKERHUB_PASSWORD
+
+  ruby-container: &ruby-container
+    <<: *working-dir
+    docker:
+      - image: circleci/ruby:2.6.3
+        auth:
+          username: $DOCKERHUB_USERNAME 
+          password: $DOCKERHUB_PASSWORD
+
+  # Cache settings
+  cache-paths: &cache-paths
+    paths:
+      - "~/.gradle"
+      - "~/.m2"
+      - "/opt/android-sdk-linux/licenses/"
+
+  # Cache keys
+  build-cache-key: &build-cache-key
+      key: build-{{ checksum "build.gradle" }}-{{ checksum ".circleci/config.yml" }}-{{ checksum "gradle.properties" }}-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "app/build.gradle" }}
+
+  prev-build-apk-cache-key: &prev-build-apk-cache-key
+      key: prev-build-{{ checksum "build.gradle" }}-{{ checksum ".circleci/config.yml" }}-{{ checksum "gradle.properties" }}-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "app/build.gradle" }}
+
+  espresso-cache-key: &espresso-cache-key
+      key: espresso-{{ checksum "build.gradle" }}-{{ checksum ".circleci/config.yml" }}-{{ checksum "gradle.properties" }}-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "app/build.gradle" }}
+
+  lint-cache-key: &lint-cache-key
+      key: lint-{{ checksum "build.gradle" }}-{{ checksum ".circleci/config.yml" }}-{{ checksum "gradle.properties" }}-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "app/build.gradle" }}
+
+  unit-test-cache-key: &unit-test-cache-key
+      key: unit-test-{{ checksum "build.gradle" }}--{{ checksum ".circleci/config.yml" }}-{{ checksum "gradle.properties" }}-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "app/build.gradle" }}
+
+  # Environment settings
+  small-environment: &small-environment
+    resource_class: small
+
+  test-environment: &test-environment
+    resource_class: xlarge
+    environment:
+      _JAVA_OPTIONS: "-Xms128m -Xmx5500m -XX:+UnlockExperimentalVMOptions -XX:+UseCGroupMemoryLimitForHeap"
+      GRADLE_OPTS: '-Dorg.gradle.jvmargs="-Xms128m -Xmx5500m -XX:+HeapDumpOnOutOfMemoryError -XX:+UnlockExperimentalVMOptions -XX:+UseCGroupMemoryLimitForHeap" -Dorg.gradle.daemon=false'
+      TZ: "/usr/share/zoneinfo/Asia/Kolkata"
+
+  lint-environment: &lint-environment
+    resource_class: large
+    environment:
+      GRADLE_OPTS: '-Dorg.gradle.jvmargs="-Xmx4000m -XX:+HeapDumpOnOutOfMemoryError" -Dorg.gradle.daemon=false'
+      TZ: "/usr/share/zoneinfo/Asia/Kolkata"
+
+jobs:
+  # Check if PR is raised to a release/development branch
+  branch-check:
+    <<: *python-container
+    <<: *small-environment
+    steps:
+        - run:
+           name: Check if PR is raised towards a valid release branch or not.
+           command: |
+                sudo pip install requests
+                python << END
+                import requests
+                import os
+                import sys
+                import json
+                import time
+                try:
+                    pullreq = os.environ["CIRCLE_PULL_REQUEST"]
+                    pullid =(filter(str.isdigit, pullreq))
+                except KeyError:
+                    pullid = os.environ["CIRCLE_PR_NUMBER"]
+                token = os.environ["GITHUB_ACCESS_TOKEN"]
+                headers={'Authorization': 'token '+token}
+                base_branch_name = "invalid"
+                counter = 0
+                while True:
+                    counter += 1
+                    try:
+                        r = requests.get('https://api.github.com/repos/'+os.environ["CIRCLE_PROJECT_USERNAME"]+'/'+os.environ["CIRCLE_PROJECT_REPONAME"]+'/pulls/'+pullid,headers=headers)
+                    except:
+                        print r.status_code
+                    if r.status_code != 200 and counter<=5:
+                        time.sleep(30)
+                        continue
+                    if r.status_code ==200:
+                        base_branch_name=r.json()['base']['ref']
+                    if base_branch_name!="invalid" or counter>=5:
+                        break
+                print "The base branch name is : "+base_branch_name
+                if base_branch_name.startswith("release_"):
+                    print "Release branch PR."
+                    r=requests.post('https://api.github.com/repos/'+os.environ["CIRCLE_PROJECT_USERNAME"]+'/'+os.environ["CIRCLE_PROJECT_REPONAME"]+'/issues/'+pullid+'/labels',headers=headers, data = '["'+base_branch_name+'"]')
+                    print r.json()
+                    sys.exit(0)
+                elif base_branch_name.startswith("development"):
+                    print "Development branch PR."
+                    sys.exit(0)
+                elif base_branch_name.startswith("master"):
+                    print "Master branch PR."
+                    sys.exit(0)
+                else:
+                    print "Not a Release or Internal branch PR."
+                    jsonItem = json.dumps('<table> <thead> <tr> <th width="50"></th> <th width="100%" data-danger-table="true" data-kind="Error"> 1 Message </th></tr></thead><tbody><tr><td>:speech_balloon:</td><td data-sticky="false"> This PR does not require PR checks to be run as it is not raised to release/Internal branch.  </td></tr></tbody></table><p align="right" data-meta="generated_by_danger">Generated by :wink: <a href="https://circleci.com/gh/'+os.environ["CIRCLE_PROJECT_USERNAME"]+'/'+os.environ["CIRCLE_PROJECT_REPONAME"]+'/">hike-ci</a></p>')
+                    r=requests.post('https://api.github.com/repos/'+os.environ["CIRCLE_PROJECT_USERNAME"]+'/'+os.environ["CIRCLE_PROJECT_REPONAME"]+'/issues/'+pullid+'/comments',headers=headers, data = '{"body": '+jsonItem +'}')
+                    sys.exit(-1)
+                END
+
+  verify-jira:
+    <<: *python-container
+    <<: *small-environment
+    steps:
+        - run:
+           name: Check whether a valid JIRA is present in the PR title.
+           command: |
+            exit 0
+            
+
+  code-checkout:
+    <<: *ruby-container
+    steps:
+        - checkout
+                
+        - persist_to_workspace:
+            root: ~/workspace
+            paths:
+                - sample
+
+  run-danger:
+      <<: *ruby-container
+      steps:
+        - <<: *git-workspace
+        - run:
+            name: Run dangerfile
+            command: |
+                if [[ ! -n "${CIRCLE_PR_NUMBER}" ]] ; then
+                    export CIRCLE_PR_NUMBER=$(echo $CIRCLE_PULL_REQUEST | rev | cut -d"/" -f1 | rev)
+                fi
+                gem install bundler:2.0.2
+                bundle install
+                bundle exec danger --fail-on-errors=true --new-comment
+  run-unit-test:
+      <<: *default-container
+      <<: *test-environment
+      steps:
+        - <<: *git-workspace
+        - restore_cache:
+            <<: *unit-test-cache-key
+        - run:
+            name: run build and test on android code base
+            command: |
+                curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+                sudo dpkg --add-architecture i386
+                sudo apt-get update
+                sudo apt-get install libc6:i386 libncurses5:i386 libstdc++6:i386 lib32z1
+                sudo apt-get install libncurses5
+                ./gradlew testReleaseUnitTest
+            no_output_timeout: 30m
+        - run:
+            name: Post unit test Failed to Github
+            when: on_fail
+            command: |
+                bash .circleci/Scripts/comment_on_pr.sh "Unit test Error" "fail" "There are unit test errors in this PR. Please fix the errors before merging."
+        - run:
+            name: Zipping the artifacts
+            when: always
+            command: |
+                cd app/build/reports/tests/
+                zip -r testReleaseUnitTest.zip testReleaseUnitTest/
+        - store_test_results:
+            path: app/build/test-results/testReleaseUnitTest/
+        - store_artifacts:
+            path: app/build/reports/tests/testReleaseUnitTest.zip
+            destination: test-report.zip
+        - save_cache:
+            <<: *unit-test-cache-key
+            <<: *cache-paths
+
+  build:
+      <<: *default-container
+      <<: *test-environment
+      steps:
+        - <<: *git-workspace
+        - restore_cache:
+            <<: *build-cache-key
+        - run:
+            name: create build
+            command: |
+                curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+                sudo dpkg --add-architecture i386
+                sudo apt-get update
+                sudo apt-get install libc6:i386 libncurses5:i386 libstdc++6:i386 lib32z1
+                sudo apt-get install libncurses5
+                ./gradlew assembleRelease --max-workers 4 --parallel --no-daemon -x lintVitalRelease
+            no_output_timeout: 20m
+        - run:
+            name: Post build Failed comment to Github
+            when: on_fail
+            command: |
+                bash .circleci/Scripts/comment_on_pr.sh "Build Error" "fail" "There are Release apk build errors in this PR. Please fix build errors before merging."
+        - store_artifacts:
+            path: app/build/outputs/apk
+            destination: APKs
+        - store_artifacts:
+            path: app/build/outputs/mapping/release/mapping.txt
+            destination: Mapping/release/mapping.txt
+        - save_cache:
+            <<: *build-cache-key
+            <<: *cache-paths
+        - persist_to_workspace:
+            root: ~/workspace
+            paths:
+                - sample/app/build/outputs/apk/
+                - sample/release.keystore
+
+  prev-build:
+      <<: *default-container
+      <<: *test-environment
+      steps:
+        - <<: *git-workspace
+        - restore_cache:
+            <<: *prev-build-apk-cache-key
+        - run:
+            name: checkout base branch
+            command: |
+                base_branch=`cat base_branch.txt`
+                git reset --hard origin/$base_branch
+                git status
+        - run:
+            name: create build for previous code
+            command: |
+                curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+                sudo dpkg --add-architecture i386
+                sudo apt-get update
+                sudo apt-get install libc6:i386 libncurses5:i386 libstdc++6:i386 lib32z1
+                sudo apt-get install libncurses5
+                ./gradlew assembleRelease -b build.gradle --max-workers 4 --parallel --no-daemon -x lintVitalRelease
+                mv app/build/outputs/apk/ app/build/outputs/apk_prev
+            no_output_timeout: 20m
+        - run:
+            name: Post previous build Failed comment to Github
+            when: on_fail
+            command: |
+                bash .circleci/Scripts/comment_on_pr.sh "Build Error" "fail" "There are previous Release apk build errors in this PR. Please fix build errors before merging."
+        - store_artifacts:
+            path: app/build/outputs/apk_prev
+            destination: APKs
+        - store_artifacts:
+            path: app/build/outputs/mapping/release/mapping.txt
+            destination: Mapping/release/mapping.txt
+        - save_cache:
+            <<: *prev-build-apk-cache-key
+            <<: *cache-paths
+        - persist_to_workspace:
+            root: ~/workspace
+            paths:
+                - sample/app/build/outputs/apk_prev
+  
+  analyse-build:
+    <<: *default-container
+    steps:
+        - <<: *git-workspace
+        - run: ls -al .circleci
+        - run:
+            name: check minSDK of APK's
+            command: |
+                minSDKVal=$($ANDROID_HOME/tools/bin/apkanalyzer manifest min-sdk app/build/outputs/apk/release/app-release*.apk)
+                if [ "$minSDKVal" -eq "$requiredMinSDK" ]; then
+                    echo "minSDK has no issues";
+                    bash .circleci/Scripts/comment_on_pr.sh "Valid MinSDK Value" "pass" "MinSDK value check passed"
+                else
+                    echo "minSDK has issues<------";
+                    echo "minSDK Value is "
+                    echo $minSDKVal
+                    if [[ ! -n "${CIRCLE_PR_NUMBER}" ]] ; then
+                        export CIRCLE_PR_NUMBER=$(echo $CIRCLE_PULL_REQUEST | rev | cut -d"/" -f1 | rev)
+                    fi
+                    bash .circleci/Scripts/comment_on_pr.sh "Invalid MinSDK Value" "fail" "There is a mismatch in minSDK value. Expected: $requiredMinSDK, Value in PR: $minSDKVal. Please get this reviewed with release-tools team."
+                    exit -1
+                fi
+        - run:
+            name: check targetSDK of APK's
+            command: |
+                targetSDKVal=$($ANDROID_HOME/tools/bin/apkanalyzer manifest target-sdk app/build/outputs/apk/release/app-release*.apk)
+                if [ "$targetSDKVal" -eq "$requiredTargetSDK" ]; then
+                    echo "targetSDK has no issues";
+                    bash .circleci/Scripts/comment_on_pr.sh "Valid TargetSDK Value" "pass" "TargetSDK value check passed"
+                else
+                    echo "targetSDK has issues<------";
+                    echo "targetSDK Value is "
+                    echo $targetSDKVal
+                    if [[ ! -n "${CIRCLE_PR_NUMBER}" ]] ; then
+                        export CIRCLE_PR_NUMBER=$(echo $CIRCLE_PULL_REQUEST | rev | cut -d"/" -f1 | rev)
+                    fi
+                    bash .circleci/Scripts/comment_on_pr.sh "Invalid TargetSDK Value" "fail" "There is a mismatch in targetSDK value. Expected: $requiredTargetSDK, Value in PR: $targetSDKVal. Please get this reviewed with release-tools team."
+                    exit -1
+                fi
+
+        - run:
+            name: Check for hidden files
+            shell: /bin/bash
+            command: |
+              exit_code=0
+              sudo pip install requests
+              python .circleci/Scripts/find_hidden_files.py
+              exit_code=$?
+              if [ -f 'changed_zip_files' ]; then
+                    while read zip_name; do
+                        echo $zip_name
+                        hidden_files=`unzip -l "$zip_name" | grep '/\.'`
+                        if [ "$?" == "0" ]; then
+                            echo "[ERROR] : Zip file $zip_name contains following hidden file(s)"
+                            echo "${hidden_files}"
+                            bash .circleci/Scripts/comment_on_pr.sh "Hidden Files in Zip Error" "fail" "Zip file $zip_name contains following hidden file(s):<br/>${hidden_files}"
+                            exit_code=1
+                        fi
+                    done < 'changed_zip_files'
+              fi
+              exit $exit_code
+
+  analyse-build-size:
+    <<: *default-container
+    steps:
+        - <<: *git-workspace
+        - run:
+            name: run apk size analysis
+            command: |
+                curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+                sudo apt update
+                sudo apt install bc
+                if [[ ! -n "${CIRCLE_PR_NUMBER}" ]] ; then
+                    export CIRCLE_PR_NUMBER=$(echo $CIRCLE_PULL_REQUEST | rev | cut -d"/" -f1 | rev)
+                fi
+                value=`curl  -s -H "Authorization: token ${GITHUB_ACCESS_TOKEN}" -H "Content-Type: application/json" "https://api.github.com/repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/pulls/${CIRCLE_PR_NUMBER}" | python -c "import json,sys;print json.load(sys.stdin)['base']['ref']"`
+                echo "base branch: $value"
+                calculate_apk_size_in_MB () { rounded=`printf "%.2f\n" $(echo "scale=3; $1/1000000" | bc)`; echo $rounded; }
+                value=$($ANDROID_HOME/tools/bin/apkanalyzer apk download-size app/build/outputs/apk/release/app-release.apk)
+                universalvalueprevious=$($ANDROID_HOME/tools/bin/apkanalyzer apk download-size app/build/outputs/apk_prev/release/app-release.apk)
+                echo $universalvalue
+                echo $universalvalueprevious
+                current_time=`date +"%Y-%m-%d %T"`
+                diff_from_base_merge_commit_Bytes=$(($universalvalue-$universalvalueprevious))
+                diff_from_base_merge_commit_KB=`printf "%.2f\n" $(echo "scale=3; $diff_from_base_merge_commit_Bytes/1000" | bc)`
+                echo $current_time, $diff_from_base_merge_commit_Bytes, $diff_from_base_merge_commit_KB
+                curl -X POST -H "Authorization: token ${GITHUB_ACCESS_TOKEN}" --data '{"body": "<!--\r\n 1 message: This give apk sizes\r\n-->\r\n\r\n <table>\r\n <thead>\r\n   <tr>\r\n     <th><\/th>\r\n      <th>\r\n        Commit Information (PR - '$CIRCLE_BRANCH')\r\n     <\/th>\r\n    <\/tr>\r\n <\/thead>\r\n <tbody>\r\n   <tr>\r\n     <td>Current PR<\/td>\r\n     <td>'$CIRCLE_SHA1'<\/td>\r\n   <\/tr>\r\n <\/tbody>\r\n<\/table>\r\n  <table>\r\n <thead>\r\n   <tr>\r\n     <th width=\"100%\" data-danger-table=\"true\" data-kind=\"Message\">\r\n        Apk size comparison \r\n     <\/th>\r\n    <\/tr>\r\n <\/thead>\r\n <tbody>\r\n   <tr>\r\n    <td>APK Variants<\/td>\r\n    <td data-sticky=\"false\">Current PR (MB) <\/td>\r\n    <td data-sticky=\"false\"> '$value' (MB)<\/td>\r\n<\/tr>\r\n  <tr>\r\n    <td>Universal<\/td>\r\n    <td data-sticky=\"false\"> '$(calculate_apk_size_in_MB $universalvalue)'<\/td>\r\n    <td data-sticky=\"false\">'$(calculate_apk_size_in_MB $universalvalueprevious)' <\/td>\r\n  <\/td>\r\n   <\/tr>\r\n <\/tbody>\r\n<\/table>\r\n\r\n<p align=\"right\" data-meta=\"generated_by_danger\">\r\n Generated by :boom: <a href=\"http:\/\/https:\/\/circleci.com\/gh\/hike\/android-sample\/\">hike-ci<\/a>\r\n<\/p>\r\n","commit_id":"${CIRCLE_SHA1}"}' https://api.github.com/repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/issues/${CIRCLE_PR_NUMBER}/comments
+                if [[ $(($universalvalue-$universalvalueprevious)) -lt $((${apksize_previous_max_KB}*1000)) ]]; then statusfromprevious=1; resultfromprevious="<b>PASSED</b> => (Current PR - $value) = $diff_from_base_merge_commit_Bytes Bytes (~ ${diff_from_base_merge_commit_KB} KB) diff in app size < ${apksize_previous_max_KB} KB Threshold"; else statusfromprevious=0; resultfromprevious="<b>FAILED</b> => (Current PR - $value) = $diff_from_base_merge_commit_Bytes Bytes (~ ${diff_from_base_merge_commit_KB} KB) diff in app size >= ${apksize_previous_max_KB} KB Threshold"; fi
+                if [[ $(($universalvalue-$universalvaluebase)) -lt $((${apksize_base_max_KB}*1000)) ]]; then statusfrombase=1; resultfrombase="<b>PASSED</b> => (Current PR - Initial Base Value) = $diff_from_base_merge_commit_Bytes Bytes diff in app size < ${apksize_base_max_KB} KB"; else statusfrombase=0; resultfrombase="<b>FAILED</b> => (Current PR - Initial Base Value) = $diff_from_base_merge_commit_Bytes Bytes diff in app size >= ${apksize_base_max_KB} KB"; fi
+                curl -X POST -H "Authorization: token ${GITHUB_ACCESS_TOKEN}" --data "{\"body\": \"<b> Universal APK size Analysis</b>\\nCurrent PR apk size(in Bytes): $universalvalue ($(calculate_apk_size_in_MB $universalvalue) MB)\\nCurrent $value apk size(in Bytes): $universalvalueprevious ($(calculate_apk_size_in_MB $universalvalueprevious) MB)\\n$resultfromprevious\"}" https://api.github.com/repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/issues/${CIRCLE_PR_NUMBER}/comments
+                if [ $statusfromprevious -eq 1 ]; then
+                echo "APK size analysis PASSED."
+                else
+                echo "APK size analysis FAILED."
+                exit 1
+                fi
+  run-lint:
+      <<: *default-container
+      <<: *lint-environment
+      steps:
+        - <<: *git-workspace
+        - restore_cache:
+            <<: *lint-cache-key
+        - run:
+            name: run lint  on android code base. (lintRelease)
+            command: |
+                curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+                sudo dpkg --add-architecture i386
+                sudo apt-get update
+                sudo apt-get install libc6:i386 libncurses5:i386 libstdc++6:i386 lib32z1
+                sudo apt-get install libncurses5
+                ./gradlew lintRelease -b build.gradle --max-workers 4 --parallel --no-daemon -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx7g
+            no_output_timeout: 20m
+        - run:
+            name: Post lint failed message to Github
+            when: on_fail
+            command: |
+                bash .circleci/Scripts/comment_on_pr.sh "Lint Error" "fail" "There are lint errors in this PR. Please fix or suppress the lint errors before merging. For help fixing the lint issue please refer <a href=\"https:\/\/hikeapp.atlassian.net\/wiki\/spaces\/QE\/blog\/2017\/11\/23\/101908510\/Ensure+High-Quality+Android+Code+With+Lint\">here<\/a>."
+        - store_artifacts:
+            path: app/build/reports/lint-results-release.html
+            destination: lint-report
+        - store_test_results:
+            path: app/build/reports/lint-results-release.xml
+        - save_cache:
+            <<: *lint-cache-key
+            <<: *cache-paths
+
+  validate-configs:
+    <<: *python-container
+    <<: *small-environment
+    steps:
+      - <<: *git-workspace
+      - run:
+         name: Run python script
+         command: |
+            sudo pip install requests
+            python .circleci/Scripts/config_validator.py
+      - run:
+            name: Check Exposed Keys
+            command: |
+                sudo pip install requests
+                python .circleci/Scripts/exposed_key_check.py
+
+  run-performance:
+    <<: *default-container
+    <<: *small-environment
+    steps:
+      - <<: *git-workspace
+      - run:
+          name: install dependencies
+          command: |
+            curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+            sudo apt update
+            sudo apt install jq
+            sudo pip install requests
+            sudo pip install smhasher
+            sudo pip install mysql-connector-python
+            sudo pip install statistics
+            wget http://apachemirror.wuchna.com/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.tar.gz
+            tar -xvf apache-maven-3.6.3-bin.tar.gz
+            mkdir ~/.ssh
+            touch ~/.ssh/known_hosts
+            ssh-keyscan github.com >> ~/.ssh/known_hosts
+      - run:
+          name: run benchmark on robustest
+          command: |
+            exit 0
+      - store_artifacts:
+          path: /home/circleci/Desktop/BenchmarkData/
+          destination: benchmark-data
+  
+  build-for-espresso:
+      <<: *default-container
+      <<: *test-environment
+      steps:
+        - <<: *git-workspace
+        - restore_cache:
+            <<: *espresso-cache-key
+        - run:
+            name: generate apks for build and test on android code base
+            command: |
+                curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+                sudo dpkg --add-architecture i386
+                sudo apt-get update
+                sudo apt-get install libc6:i386 libncurses5:i386 libstdc++6:i386 lib32z1
+                sudo apt-get install libncurses5
+                ./gradlew assembleRelease assembleAndroidTest -b build.gradle --max-workers 4 --parallel --no-daemon
+            no_output_timeout: 20m
+        - run:
+            name: Post debug build Failed to Github
+            when: on_fail
+            command: |
+                bash .circleci/Scripts/comment_on_pr.sh "Test APK Build Error" "fail" "There are test apk build errors in this PR. Please fix build errors before merging."
+        - run:
+            name: Post build Failed to Regression team
+            when: on_fail
+            command: |
+                curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+                sudo apt update
+                sudo apt install gettext-base
+                curl --location --fail https://www.dropbox.com/s/wwhy624iy29dcsl/mail.txt?dl=0 --output mail1.txt
+                envsubst < mail1.txt > mail.txt
+                curl --url 'smtps://smtp.gmail.com:465' --ssl-reqd --upload-file mail.txt  --mail-from 'automationreports@hike.in' --mail-rcpt 'regression@hike.in' --user '$emailpassword' --insecure
+        - store_artifacts:
+            path: app/build/outputs/apk
+            destination: APKs
+        - store_artifacts:
+            path: app/build/outputs/mapping/androidTest/release/mapping.txt
+            destination: Mapping/androidTest/release/mapping.txt
+        - store_artifacts:
+            path: app/build/outputs/mapping/release/mapping.txt
+            destination: Mapping/release/mapping.txt
+        - persist_to_workspace:
+            root: ~/workspace
+            paths:
+                - sample/app/build/outputs/apk/
+
+  run-espresso-tests:
+    <<: *python-container
+    <<: *small-environment
+    steps:
+      - <<: *git-workspace
+      - run:
+          name: upload APKs to robustest
+          command: |
+            if [[ ! -n "${CIRCLE_PR_NUMBER}" ]] ; then
+                export CIRCLE_PR_NUMBER=$(echo $CIRCLE_PULL_REQUEST | rev | cut -d"/" -f1 | rev)
+            fi
+            echo "export CIRCLE_PR_NUMBER=${CIRCLE_PR_NUMBER}" >> $BASH_ENV
+            curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+            sudo apt update
+            sudo apt install jq
+            exit 0
+      - run:
+          name: run espresso tests on robustest lab
+          shell: timeout 1800 /bin/bash -eo pipefail
+          command: |
+            exit 0
+
+workflows:
+  version: 2
+  pr-workflow:
+    jobs:
+      - trigger-ci:
+            type: approval
+      - branch-check:
+            requires:
+                - trigger-ci
+      - verify-jira:
+            requires:
+                - branch-check
+      - code-checkout:
+            requires:
+                - branch-check
+      - run-danger:
+            requires:
+                - code-checkout
+      - build:
+            requires:
+                - code-checkout
+      - prev-build:
+            requires:
+                - code-checkout
+      - analyse-build:
+            requires:
+                - build
+      - analyse-build-size:
+            requires:
+                - build
+                - prev-build
+      - run-unit-test:
+            requires:
+                - code-checkout
+      - run-lint:
+            requires:
+                - code-checkout
+      - validate-configs:
+            requires:
+                - code-checkout
+      - build-for-espresso:
+            requires:
+                - code-checkout
+      - run-espresso:
+            requires:
+                - build-for-espresso
+      - run-performance:
+            requires:
+                - build
