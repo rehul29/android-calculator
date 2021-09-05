@@ -17,7 +17,7 @@ if __name__ == '__main__':
     token = "token " + os.environ["GITHUB_ACCESS_TOKEN"]
     try:
         pullreq = os.environ["CIRCLE_PULL_REQUEST"]
-        pullid =(filter(str.isdigit, pullreq))
+        pullid = pullreq[pullreq.rindex('/')+1:]
     except KeyError:
         pullid = os.environ["CIRCLE_PR_NUMBER"]
     headers={'Authorization': token}
